@@ -75,9 +75,51 @@ beaming and color shift consistently. Blackbody colors come from integrating
 the Planck spectrum against analytic CIE fits (Wyman–Sloan–Shirley 2013) —
 no lookup-table data files.
 
+## Simulation: orbiting hot spot with retarded time
+
+![Hot spot orbit](renders/hotspot.gif)
+
+The scene can be made time-dependent: a Gaussian hot spot orbits the disk at
+`--spot-r` on a circular geodesic (Ω = r^(−3/2), one orbit at r = 7 takes
+2π·7^1.5 ≈ 116 M of coordinate time). Coordinate time is integrated along
+every ray as a 5th state component (dt/dλ = E/(1 − 2/r), validated against
+the tortoise-coordinate closed form Δt = Δr + 2 ln((r₁−2)/(r₀−2)) to 10⁻⁶),
+and every disk hit is shaded at the photon's **retarded** emission time
+
+```
+t_emit = t_frame − Δt_light,     φ_spot(t_emit) = Ω_spot · t_emit
+```
+
+so light-travel delays are physically correct. That is what the clip above
+actually demonstrates: light from the disk's far side takes longer to reach
+the camera than light from the near side, and the wrapped secondary image
+(the thin ring hugging the shadow) is delayed further still — so the spot's
+ring image visibly *lags* its primary image, and a light echo sweeps the
+ring once per orbit. The spot multiplies the emitted *temperature*
+(1 + amp·gaussian), so it is hotter and bluer, not just brighter, and its
+brightness still pulses through the Doppler cycle via the same T_obs⁴
+pipeline as the disk. The animation clock is coordinate time; a clock riding
+with the camera at r = 30 ticks slower by the constant factor
+√(1 − 2/30) ≈ 0.966.
+
+For a fixed camera the ray geometry never changes, so `--frames N
+--frame-dt DT` traces the image once and re-shades it N times — about 200×
+faster per frame than re-tracing (a frame re-shades in milliseconds), and
+each emitted frame is byte-identical to the equivalent single `--time T`
+invocation (enforced by test):
+
+```bash
+# one spot orbit, 58 frames
+cargo run --release -- --spot-amp 1.2 --frames 58 --frame-dt 2 --output frames/f.png
+```
+
+`scripts/orbit.sh` renders a camera orbit instead (`--azimuth` sweep, one
+trace per frame since the geometry moves) and assembles the frames with
+ffmpeg.
+
 ## Correctness
 
-`cargo test` runs 13 tests, including the physics sanity checks from the
+`cargo test` runs 18 tests, including the physics sanity checks from the
 project spec:
 
 - a photon launched tangentially at the photon sphere (r = 3) stays
@@ -93,7 +135,13 @@ project spec:
   the wrong size while looking entirely plausible;
 - the rendered silhouette's pixel radius matches the analytic prediction
   (W/2)·tan(asin(b_crit √(1−2/r_cam) / r_cam)) / tan(fov/2);
-- the parallel render is byte-identical to the serial one.
+- the parallel render is byte-identical to the serial one;
+- integrated coordinate time along a radial ray matches the
+  tortoise-coordinate closed form to 10⁻⁶, and far-side disk light arrives
+  later than near-side light;
+- `--spot-amp 0` is byte-identical to the plain disk (no parameter leakage),
+  the spot moves with frame time, and frames-mode output is byte-identical
+  to equivalent single-frame invocations.
 
 ## Performance
 
@@ -116,12 +164,18 @@ schwarzschild-raytracer [OPTIONS]
   --output PATH      output PNG path            (default render.png)
   --r-cam R          camera radius in M         (default 30.0)
   --inclination DEG  polar angle from +z axis   (default 80.0; 90 = in disk plane)
+  --azimuth DEG      camera azimuth around +z   (default 0.0)
   --fov DEG          horizontal field of view   (default 75.0)
   --samples N        NxN supersampling          (default 2)
   --serial           render single-threaded (benchmark comparison)
   --max-steps N      per-ray integration cap    (default 60000)
   --step-scale Q     RK4 step h = Q*(r-2)       (default 0.02)
   --exposure X       disk intensity scale       (default 4.0)
+  --time T           frame coordinate time in M (default 0.0)
+  --spot-amp A       hot-spot amplitude, 0=off  (default 0.0)
+  --spot-r R         hot-spot orbit radius in M (default 7.0)
+  --frames N         frames to emit (fixed cam) (default 1)
+  --frame-dt DT      time step between frames   (default 1.0)
 ```
 
 Dependencies: `rayon` and `image` only. The vector math and CLI parsing are
