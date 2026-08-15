@@ -86,7 +86,7 @@ fn shade_pixel(cam: &Camera, scene: &Scene, cfg: &Config, i: u32, j: u32) -> [u8
                     // Asymptotic direction reconstructed from the in-plane
                     // final state: dx/dλ = p_r·r̂ + r·p_φ·φ̂ in the (e1,e2)
                     // plane. Euclidean normalization is fine at r = 2000.
-                    let [r, phi, p_r, p_phi] = state;
+                    let [r, phi, p_r, p_phi, _t] = state;
                     let (s, c) = phi.sin_cos();
                     let v = ray.e1 * (p_r * c - r * p_phi * s)
                         + ray.e2 * (p_r * s + r * p_phi * c);

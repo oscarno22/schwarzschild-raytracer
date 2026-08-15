@@ -27,7 +27,8 @@ pub struct Camera {
 /// A pixel's ray: geodesic initial state plus the orbital-plane basis
 /// needed to reconstruct global 3D positions and directions.
 pub struct Ray {
-    /// [r, φ_plane, dr/dλ, dφ/dλ] at the camera.
+    /// [r, φ_plane, dr/dλ, dφ/dλ, t] at the camera (t = 0; the trace runs
+    /// backward, so a hit's emission time is −t_hit relative to the camera).
     pub y0: State,
     /// Conserved energy (= camera √f under local normalization p^t̂ = 1).
     pub e: f64,
@@ -107,6 +108,7 @@ impl Camera {
                 0.0,
                 cos_d * self.sqrt_f,
                 sin_d / self.r_cam,
+                0.0,
             ],
             e: self.sqrt_f,
             l: self.r_cam * sin_d,
