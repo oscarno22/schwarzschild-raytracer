@@ -50,6 +50,9 @@ fn weak_deflection_matches_4_over_b() {
         step_scale: 0.02,
         max_steps: 200_000,
         r_far: r0,
+        plane_az: 0.0,
+        plane_bz: 0.0,
+        disk: None,
     };
     let RayOutcome::Escaped { state } = trace(y0, &params) else {
         panic!("b = 100 ray must escape");
@@ -78,6 +81,9 @@ fn critical_impact_parameter_separates_capture_and_escape() {
             step_scale: 0.02,
             max_steps: 200_000,
             r_far: r0,
+            plane_az: 0.0,
+            plane_bz: 0.0,
+            disk: None,
         };
         match (trace(y0, &params), expect_escape) {
             (RayOutcome::Escaped { .. }, true) | (RayOutcome::Horizon, false) => {}

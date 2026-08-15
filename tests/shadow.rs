@@ -26,6 +26,9 @@ fn shadow_edge_converges_to_b_crit() {
             step_scale: 0.02,
             max_steps: 200_000,
             r_far: R_FAR,
+            plane_az: 0.0,
+            plane_bz: 0.0,
+            disk: None,
         };
         // MaxSteps means photon-sphere limbo at the exact boundary: captured.
         !matches!(trace(ray.y0, &params), RayOutcome::Escaped { .. })

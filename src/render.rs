@@ -4,6 +4,7 @@
 use crate::Config;
 use crate::camera::Camera;
 use crate::integrator::{RayOutcome, TraceParams, trace};
+use crate::scene::{DISK_INNER, DISK_OUTER, disk_gradient};
 
 /// Escaping rays are integrated out to this radius before termination.
 /// Classification is already certain at r ≈ 50 (no turning points outside the
@@ -47,11 +48,15 @@ fn shade_pixel(cam: &Camera, cfg: &Config, i: u32, j: u32) -> [u8; 3] {
                 step_scale: cfg.step_scale,
                 max_steps: cfg.max_steps,
                 r_far: R_FAR,
+                plane_az: ray.e1.z,
+                plane_bz: ray.e2.z,
+                disk: Some((DISK_INNER, DISK_OUTER)),
             };
             let c = match trace(ray.y0, &params) {
                 RayOutcome::Horizon | RayOutcome::MaxSteps => [0.0; 3],
+                RayOutcome::Disk { state } => disk_gradient(state[0]),
                 // Flat gray placeholder background; starfield lands later.
-                RayOutcome::Escaped { .. } => [0.5; 3],
+                RayOutcome::Escaped { .. } => [0.2; 3],
             };
             acc = [acc[0] + c[0], acc[1] + c[1], acc[2] + c[2]];
         }

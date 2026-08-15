@@ -5,6 +5,7 @@ pub mod camera;
 pub mod integrator;
 pub mod metric;
 pub mod render;
+pub mod scene;
 pub mod vec3;
 
 /// Render configuration, populated from CLI flags. All distances in units of M.

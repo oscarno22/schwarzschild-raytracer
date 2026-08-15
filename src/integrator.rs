@@ -17,11 +17,22 @@ pub struct TraceParams {
     pub max_steps: u32,
     /// Outward-moving rays beyond this radius terminate as escaped.
     pub r_far: f64,
+    /// z-components of the ray-plane basis (e1.z, e2.z): the global height
+    /// of the ray is z = r(a·cos φ + b·sin φ) — the only piece of 3D
+    /// geometry the hot loop needs.
+    pub plane_az: f64,
+    pub plane_bz: f64,
+    /// Accretion disk annulus (inner, outer) in the global equatorial plane,
+    /// or None to trace through it (shadow-only renders).
+    pub disk: Option<(f64, f64)>,
 }
 
 pub enum RayOutcome {
     /// Fell through the horizon (or the integrator stepped inside it).
     Horizon,
+    /// Crossed the equatorial plane inside the disk annulus; state is
+    /// interpolated to the crossing (state[0] is the hit radius).
+    Disk { state: State },
     /// Reached r_far moving outward; state gives the asymptotic direction.
     Escaped { state: State },
     /// Step cap hit — treated as captured (photon-sphere limbo).
@@ -53,10 +64,19 @@ pub fn rk4_step(y: State, h: f64, e_sq: f64) -> State {
     ]
 }
 
-/// Integrate a ray from y0 until it falls in, escapes, or exhausts max_steps.
+/// Global height above the equatorial plane, from in-plane coordinates.
+#[inline]
+fn global_z(y: State, p: &TraceParams) -> f64 {
+    let (s, c) = y[1].sin_cos();
+    y[0] * (p.plane_az * c + p.plane_bz * s)
+}
+
+/// Integrate a ray from y0 until it falls in, hits the disk, escapes, or
+/// exhausts max_steps.
 pub fn trace(y0: State, p: &TraceParams) -> RayOutcome {
     let e_sq = p.e * p.e;
     let mut y = y0;
+    let mut z = global_z(y0, p);
     for _ in 0..p.max_steps {
         let h = p.step_scale * (y[0] - R_HORIZON);
         let y_new = rk4_step(y, h, e_sq);
@@ -65,10 +85,26 @@ pub fn trace(y0: State, p: &TraceParams) -> RayOutcome {
         if !(y_new[0] > R_HORIZON + HORIZON_EPS) {
             return RayOutcome::Horizon;
         }
+        let z_new = global_z(y_new, p);
+        if let Some((inner, outer)) = p.disk
+            && z * z_new < 0.0
+        {
+            // Crossed the equatorial plane inside this step; refine by
+            // linear interpolation in λ (steps in the disk region are ~0.1,
+            // far below a pixel's footprint).
+            let s = z / (z - z_new);
+            let hit: State = std::array::from_fn(|k| y[k] + s * (y_new[k] - y[k]));
+            // A crossing outside the annulus (the inner gap or beyond the
+            // rim) continues: later crossings image the disk's far side.
+            if hit[0] >= inner && hit[0] <= outer {
+                return RayOutcome::Disk { state: hit };
+            }
+        }
         if y_new[0] > p.r_far && y_new[2] > 0.0 {
             return RayOutcome::Escaped { state: y_new };
         }
         y = y_new;
+        z = z_new;
     }
     RayOutcome::MaxSteps
 }
