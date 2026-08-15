@@ -2,6 +2,7 @@
 //! geodesics of the Schwarzschild metric (M = 1 geometric units).
 
 pub mod camera;
+pub mod color;
 pub mod integrator;
 pub mod metric;
 pub mod render;
@@ -21,6 +22,7 @@ pub struct Config {
     pub serial: bool,
     pub max_steps: u32,
     pub step_scale: f64,
+    pub exposure: f64,
 }
 
 impl Default for Config {
@@ -36,6 +38,7 @@ impl Default for Config {
             serial: false,
             max_steps: 60_000,
             step_scale: 0.02,
+            exposure: 4.0,
         }
     }
 }
@@ -51,7 +54,8 @@ schwarzschild-raytracer [OPTIONS]
   --samples N        NxN supersampling          (default 2)
   --serial           render single-threaded (benchmark comparison)
   --max-steps N      per-ray integration cap    (default 60000)
-  --step-scale Q     RK4 step h = Q*(r-2)       (default 0.02)";
+  --step-scale Q     RK4 step h = Q*(r-2)       (default 0.02)
+  --exposure X       disk intensity scale       (default 4.0)";
 
 impl Config {
     pub fn parse(args: impl Iterator<Item = String>) -> Result<Self, String> {
@@ -73,6 +77,7 @@ impl Config {
                 "--serial" => cfg.serial = true,
                 "--max-steps" => cfg.max_steps = parse_num(&value("--max-steps")?)?,
                 "--step-scale" => cfg.step_scale = parse_num(&value("--step-scale")?)?,
+                "--exposure" => cfg.exposure = parse_num(&value("--exposure")?)?,
                 "--help" | "-h" => return Err(String::new()),
                 other => return Err(format!("unknown flag: {other}")),
             }

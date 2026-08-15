@@ -5,8 +5,9 @@ use rayon::prelude::*;
 
 use crate::Config;
 use crate::camera::Camera;
+use crate::color::tonemap;
 use crate::integrator::{RayOutcome, TraceParams, trace};
-use crate::scene::{DISK_INNER, DISK_OUTER, disk_gradient};
+use crate::scene::{DISK_INNER, DISK_OUTER, Scene};
 
 /// Escaping rays are integrated out to this radius before termination.
 /// Classification is already certain at r ≈ 50 (no turning points outside the
@@ -22,30 +23,31 @@ pub fn render(cfg: &Config) -> Vec<u8> {
         cfg.width,
         cfg.height,
     );
+    let scene = Scene::new(cfg.r_cam, cfg.exposure);
     let mut buf = vec![0u8; cfg.width as usize * cfg.height as usize * 3];
     let row_len = cfg.width as usize * 3;
     if cfg.serial {
         for (j, row) in buf.chunks_mut(row_len).enumerate() {
-            render_row(&cam, cfg, j as u32, row);
+            render_row(&cam, &scene, cfg, j as u32, row);
         }
     } else {
         // Rows are disjoint slices and each pixel is a pure function of
         // (i, j, cfg), so the output is byte-identical to the serial path.
         buf.par_chunks_mut(row_len)
             .enumerate()
-            .for_each(|(j, row)| render_row(&cam, cfg, j as u32, row));
+            .for_each(|(j, row)| render_row(&cam, &scene, cfg, j as u32, row));
     }
     buf
 }
 
-fn render_row(cam: &Camera, cfg: &Config, j: u32, row: &mut [u8]) {
+fn render_row(cam: &Camera, scene: &Scene, cfg: &Config, j: u32, row: &mut [u8]) {
     for i in 0..cfg.width {
-        let px = shade_pixel(cam, cfg, i, j);
+        let px = shade_pixel(cam, scene, cfg, i, j);
         row[i as usize * 3..i as usize * 3 + 3].copy_from_slice(&px);
     }
 }
 
-fn shade_pixel(cam: &Camera, cfg: &Config, i: u32, j: u32) -> [u8; 3] {
+fn shade_pixel(cam: &Camera, scene: &Scene, cfg: &Config, i: u32, j: u32) -> [u8; 3] {
     let n = cfg.samples;
     let mut acc = [0.0f64; 3];
     for a in 0..n {
@@ -64,13 +66,18 @@ fn shade_pixel(cam: &Camera, cfg: &Config, i: u32, j: u32) -> [u8; 3] {
             };
             let c = match trace(ray.y0, &params) {
                 RayOutcome::Horizon | RayOutcome::MaxSteps => [0.0; 3],
-                RayOutcome::Disk { state } => disk_gradient(state[0]),
-                // Flat gray placeholder background; starfield lands later.
-                RayOutcome::Escaped { .. } => [0.2; 3],
+                RayOutcome::Disk { state } => {
+                    // z-axis angular momentum is conserved and computable at
+                    // ray setup: L_z = L·(e1×e2)·ẑ.
+                    let b_z = ray.l / ray.e * ray.e1.cross(ray.e2).z;
+                    scene.disk_radiance(state[0], b_z)
+                }
+                // Dim placeholder background; starfield lands next stage.
+                RayOutcome::Escaped { .. } => [0.01, 0.01, 0.012],
             };
             acc = [acc[0] + c[0], acc[1] + c[1], acc[2] + c[2]];
         }
     }
     let inv = 1.0 / (n * n) as f64;
-    std::array::from_fn(|k| ((acc[k] * inv).clamp(0.0, 1.0) * 255.0).round() as u8)
+    tonemap([acc[0] * inv, acc[1] * inv, acc[2] * inv])
 }
