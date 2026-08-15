@@ -1,8 +1,10 @@
 //! Schwarzschild black hole raytracer: backward ray tracing through null
 //! geodesics of the Schwarzschild metric (M = 1 geometric units).
 
+pub mod camera;
 pub mod integrator;
 pub mod metric;
+pub mod render;
 pub mod vec3;
 
 /// Render configuration, populated from CLI flags. All distances in units of M.
