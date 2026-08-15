@@ -1,6 +1,8 @@
 //! Per-pixel rendering. Each pixel is a pure function of (i, j, config), so
 //! the parallel and serial paths are byte-identical by construction.
 
+use rayon::prelude::*;
+
 use crate::Config;
 use crate::camera::Camera;
 use crate::integrator::{RayOutcome, TraceParams, trace};
@@ -22,8 +24,16 @@ pub fn render(cfg: &Config) -> Vec<u8> {
     );
     let mut buf = vec![0u8; cfg.width as usize * cfg.height as usize * 3];
     let row_len = cfg.width as usize * 3;
-    for (j, row) in buf.chunks_mut(row_len).enumerate() {
-        render_row(&cam, cfg, j as u32, row);
+    if cfg.serial {
+        for (j, row) in buf.chunks_mut(row_len).enumerate() {
+            render_row(&cam, cfg, j as u32, row);
+        }
+    } else {
+        // Rows are disjoint slices and each pixel is a pure function of
+        // (i, j, cfg), so the output is byte-identical to the serial path.
+        buf.par_chunks_mut(row_len)
+            .enumerate()
+            .for_each(|(j, row)| render_row(&cam, cfg, j as u32, row));
     }
     buf
 }
