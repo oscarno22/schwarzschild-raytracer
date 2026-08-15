@@ -40,9 +40,17 @@ pub struct Ray {
 }
 
 impl Camera {
-    pub fn new(r_cam: f64, inclination_deg: f64, fov_deg: f64, width: u32, height: u32) -> Self {
+    pub fn new(
+        r_cam: f64,
+        inclination_deg: f64,
+        azimuth_deg: f64,
+        fov_deg: f64,
+        width: u32,
+        height: u32,
+    ) -> Self {
         let inc = inclination_deg.to_radians();
-        let pos = Vec3::new(inc.sin(), 0.0, inc.cos()) * r_cam;
+        let az = azimuth_deg.to_radians();
+        let pos = Vec3::new(inc.sin() * az.cos(), inc.sin() * az.sin(), inc.cos()) * r_cam;
         let forward = (-pos).normalize();
         let cross = forward.cross(Vec3::new(0.0, 0.0, 1.0));
         // Looking straight down the polar axis leaves "up" unconstrained.

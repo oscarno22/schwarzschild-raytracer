@@ -19,6 +19,7 @@ pub fn render(cfg: &Config) -> Vec<u8> {
     let cam = Camera::new(
         cfg.r_cam,
         cfg.inclination_deg,
+        cfg.azimuth_deg,
         cfg.fov_deg,
         cfg.width,
         cfg.height,

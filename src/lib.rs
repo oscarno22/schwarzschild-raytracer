@@ -17,6 +17,7 @@ pub struct Config {
     pub output: String,
     pub r_cam: f64,
     pub inclination_deg: f64,
+    pub azimuth_deg: f64,
     pub fov_deg: f64,
     pub samples: u32,
     pub serial: bool,
@@ -33,6 +34,7 @@ impl Default for Config {
             output: "render.png".to_string(),
             r_cam: 30.0,
             inclination_deg: 80.0,
+            azimuth_deg: 0.0,
             fov_deg: 75.0,
             samples: 2,
             serial: false,
@@ -50,6 +52,7 @@ schwarzschild-raytracer [OPTIONS]
   --output PATH      output PNG path            (default render.png)
   --r-cam R          camera radius in M         (default 30.0)
   --inclination DEG  polar angle from +z axis   (default 80.0; 90 = in disk plane)
+  --azimuth DEG      camera azimuth around +z   (default 0.0)
   --fov DEG          horizontal field of view   (default 75.0)
   --samples N        NxN supersampling          (default 2)
   --serial           render single-threaded (benchmark comparison)
@@ -72,6 +75,7 @@ impl Config {
                 "--output" => cfg.output = value("--output")?,
                 "--r-cam" => cfg.r_cam = parse_num(&value("--r-cam")?)?,
                 "--inclination" => cfg.inclination_deg = parse_num(&value("--inclination")?)?,
+                "--azimuth" => cfg.azimuth_deg = parse_num(&value("--azimuth")?)?,
                 "--fov" => cfg.fov_deg = parse_num(&value("--fov")?)?,
                 "--samples" => cfg.samples = parse_num(&value("--samples")?)?,
                 "--serial" => cfg.serial = true,
