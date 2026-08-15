@@ -24,6 +24,16 @@ pub struct Config {
     pub max_steps: u32,
     pub step_scale: f64,
     pub exposure: f64,
+    /// Coordinate time of the frame (camera clock sits at t = 0 + this).
+    pub time: f64,
+    /// Hot-spot temperature amplitude; 0 disables the spot entirely.
+    pub spot_amp: f64,
+    /// Orbital radius of the hot spot (circular geodesic, Ω = r^(−3/2)).
+    pub spot_r: f64,
+    /// Number of frames to emit (fixed camera: trace once, re-shade N times).
+    pub frames: u32,
+    /// Coordinate-time step between frames.
+    pub frame_dt: f64,
 }
 
 impl Default for Config {
@@ -41,6 +51,11 @@ impl Default for Config {
             max_steps: 60_000,
             step_scale: 0.02,
             exposure: 4.0,
+            time: 0.0,
+            spot_amp: 0.0,
+            spot_r: 7.0,
+            frames: 1,
+            frame_dt: 1.0,
         }
     }
 }
@@ -58,7 +73,12 @@ schwarzschild-raytracer [OPTIONS]
   --serial           render single-threaded (benchmark comparison)
   --max-steps N      per-ray integration cap    (default 60000)
   --step-scale Q     RK4 step h = Q*(r-2)       (default 0.02)
-  --exposure X       disk intensity scale       (default 4.0)";
+  --exposure X       disk intensity scale       (default 4.0)
+  --time T           frame coordinate time in M (default 0.0)
+  --spot-amp A       hot-spot amplitude, 0=off  (default 0.0)
+  --spot-r R         hot-spot orbit radius in M (default 7.0)
+  --frames N         frames to emit (fixed cam) (default 1)
+  --frame-dt DT      time step between frames   (default 1.0)";
 
 impl Config {
     pub fn parse(args: impl Iterator<Item = String>) -> Result<Self, String> {
@@ -82,6 +102,11 @@ impl Config {
                 "--max-steps" => cfg.max_steps = parse_num(&value("--max-steps")?)?,
                 "--step-scale" => cfg.step_scale = parse_num(&value("--step-scale")?)?,
                 "--exposure" => cfg.exposure = parse_num(&value("--exposure")?)?,
+                "--time" => cfg.time = parse_num(&value("--time")?)?,
+                "--spot-amp" => cfg.spot_amp = parse_num(&value("--spot-amp")?)?,
+                "--spot-r" => cfg.spot_r = parse_num(&value("--spot-r")?)?,
+                "--frames" => cfg.frames = parse_num(&value("--frames")?)?,
+                "--frame-dt" => cfg.frame_dt = parse_num(&value("--frame-dt")?)?,
                 "--help" | "-h" => return Err(String::new()),
                 other => return Err(format!("unknown flag: {other}")),
             }
@@ -94,6 +119,17 @@ impl Config {
         }
         if !(cfg.fov_deg > 0.0 && cfg.fov_deg < 180.0) {
             return Err("--fov must be in (0, 180)".into());
+        }
+        if cfg.frames == 0 {
+            return Err("--frames must be nonzero".into());
+        }
+        if cfg.spot_amp != 0.0 {
+            if cfg.spot_amp <= -1.0 {
+                return Err("--spot-amp must be > -1 (temperature stays positive)".into());
+            }
+            if !(cfg.spot_r > 6.0 && cfg.spot_r < 20.0) {
+                return Err("--spot-r must lie inside the disk annulus (6, 20)".into());
+            }
         }
         Ok(cfg)
     }
