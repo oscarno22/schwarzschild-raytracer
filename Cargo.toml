@@ -1,0 +1,11 @@
+[package]
+name = "schwarzschild-raytracer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rayon = "1"
+image = "0.25"
+
+[profile.release]
+lto = "thin"
