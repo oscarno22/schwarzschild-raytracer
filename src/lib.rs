@@ -3,6 +3,7 @@
 
 pub mod camera;
 pub mod color;
+pub mod deltatable;
 pub mod integrator;
 pub mod metric;
 pub mod render;
