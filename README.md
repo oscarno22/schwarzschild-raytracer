@@ -115,11 +115,67 @@ cargo run --release -- --spot-amp 1.2 --frames 58 --frame-dt 2 --output frames/f
 
 `scripts/orbit.sh` renders a camera orbit instead (`--azimuth` sweep, one
 trace per frame since the geometry moves) and assembles the frames with
-ffmpeg.
+ffmpeg. Set `TIME_PER_FRAME` to advance the simulation clock during the
+orbit — camera and spot orbit together, echoes included:
+
+```bash
+TIME_PER_FRAME=1 FRAMES=360 ./scripts/orbit.sh --spot-amp 1.2
+```
+
+### Seeing the light delays directly
+
+![Light echo map](renders/echo.png)
+
+`--render-mode echo` drops the physical shading and false-colors every disk
+pixel by its light-travel delay Δt instead (blue = youngest light, orange →
+white = oldest). The far side reads older than the near side, and the
+wrapped secondary ring hugging the shadow is the oldest light in frame —
+the picture *is* the retarded-time structure that the hot-spot animation
+plays out in time.
+
+`--profile nt` switches the disk temperature law from T ∝ r^(−3/4) to
+Novikov–Thorne, T ∝ [r⁻³(1 − √(6/r))]^(1/4): the zero-torque inner
+boundary makes the disk fade to black at the ISCO with the peak at
+r = 49/6 ≈ 8.17.
+
+## Real-time viewer
+
+```bash
+cargo run --release --features viewer --bin viewer
+```
+
+opens an interactive window (winit + softbuffer, optional dependencies
+behind the `viewer` feature — the default build stays rayon + image only).
+It renders through a precomputed **δ-table**: at fixed camera radius every
+geodesic is a function of the single screen angle ε, so the viewer
+tabulates ~4k trajectory polylines (φ, r, t) on a geometrically refined ε
+grid — spacing shrinks toward the capture boundary ε_crit =
+asin(b_crit·√f/r_cam), where deflection diverges — plus a subcritical set
+for plunging rays that cross the near-side disk before the horizon. Per
+pixel, disk crossings are then *analytic* (z = r(a cos φ + b sin φ) = 0 ⇒
+φ = −atan2(a,b) + kπ) and resolve with two binary searches instead of
+~500 RK4 steps; shading reuses the exact offline Scene code, so table
+frames match full renders to a few counts per channel outside a thin band
+at the photon ring (enforced by test — the ring itself just looks slightly
+soft).
+
+| Key | Action |
+|---|---|
+| ← / → | orbit azimuth |
+| ↑ / ↓ | inclination |
+| Z / X | zoom (never rebuilds — the table covers the full zoom range) |
+| Q / E | camera radius (the one action that rebuilds the table, ~0.3 s) |
+| Space | pause the simulation clock |
+| , / . | scrub time ±5 M |
+| H | toggle the hot spot |
+| Esc | quit |
+
+`--table` runs the same fast path headless on the main binary (PNG out),
+which is also how it's verified.
 
 ## Correctness
 
-`cargo test` runs 18 tests, including the physics sanity checks from the
+`cargo test` runs 26 tests, including the physics sanity checks from the
 project spec:
 
 - a photon launched tangentially at the photon sphere (r = 3) stays
@@ -141,19 +197,30 @@ project spec:
   later than near-side light;
 - `--spot-amp 0` is byte-identical to the plain disk (no parameter leakage),
   the spot moves with frame time, and frames-mode output is byte-identical
-  to equivalent single-frame invocations.
+  to equivalent single-frame invocations;
+- the δ-table's analytic ε_crit matches integrator bisection to 10⁻⁶ rad,
+  its capture/escape classification and disk hits (radius and retarded time
+  to 0.05 M) match the full trace, and a table-shaded image agrees with the
+  full render for ≥99% of pixels within 4/255 per channel outside a 3 mrad
+  band at the photon ring.
 
 ## Performance
 
 Each pixel is a pure function, parallelized over rows with rayon. At
-1280×720, 1 sample/px on a 10-core Apple Silicon machine:
+1280×720, 1 sample/px:
 
-| Mode | Time | Throughput |
+| Mode | 10-core Apple Silicon | 4-core container |
 |---|---|---|
-| `--serial` | 6.2 s | 0.15 Mrays/s |
-| parallel (default) | 0.94 s | 0.98 Mrays/s |
+| `--serial` | 6.2 s | 19.0 s |
+| parallel (default) | 0.94 s | 5.3 s |
+| frames mode, per re-shaded frame | — | 38 ms |
+| δ-table, full re-render per frame | — | 0.17 s |
 
-6.6× speedup; output PNGs hash identically.
+Serial and parallel PNGs hash identically. Frames mode re-shades a cached
+trace (fixed camera, ~140× faster than re-tracing); the δ-table pays a
+0.2 s build per camera radius and then re-renders the *whole frame* —
+camera motion included — ~30× faster than a full trace, which is what makes
+the interactive viewer possible on CPU.
 
 ## Usage
 
@@ -176,7 +243,13 @@ schwarzschild-raytracer [OPTIONS]
   --spot-r R         hot-spot orbit radius in M (default 7.0)
   --frames N         frames to emit (fixed cam) (default 1)
   --frame-dt DT      time step between frames   (default 1.0)
+  --profile P        disk temperature law: thin | nt (default thin)
+  --render-mode M    color | echo (light-delay false color; default color)
+  --table            render via the precomputed δ-table (viewer's fast path)
 ```
+
+The viewer binary (`--features viewer --bin viewer`) accepts the same
+flags for its initial state.
 
 Dependencies: `rayon` and `image` only. The vector math and CLI parsing are
 hand-rolled — the physics is the whole story.
