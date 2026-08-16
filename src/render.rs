@@ -65,7 +65,7 @@ impl CachedRender {
         // ~0.0006 rad so extreme resolutions stay sane.
         let star_sigma = (1.5 * cfg.fov_deg.to_radians() / cfg.width as f64).max(6e-4);
         let spot = (cfg.spot_amp != 0.0).then(|| Spot::new(cfg.spot_r, cfg.spot_amp));
-        let scene = Scene::new(cfg.r_cam, cfg.exposure, star_sigma, spot);
+        let scene = Scene::new(cfg.r_cam, cfg.exposure, star_sigma, spot, cfg.profile);
         let n_px = cfg.width as usize * cfg.height as usize;
         let mut pixels = Vec::with_capacity(n_px);
         let trace_row = |j: u32, row: &mut [PixelCache]| {

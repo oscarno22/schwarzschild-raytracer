@@ -34,6 +34,8 @@ pub struct Config {
     pub frames: u32,
     /// Coordinate-time step between frames.
     pub frame_dt: f64,
+    /// Disk temperature law: thin (T ∝ r^(−3/4)) or Novikov–Thorne.
+    pub profile: scene::DiskProfile,
 }
 
 impl Default for Config {
@@ -56,6 +58,7 @@ impl Default for Config {
             spot_r: 7.0,
             frames: 1,
             frame_dt: 1.0,
+            profile: scene::DiskProfile::Thin,
         }
     }
 }
@@ -78,7 +81,8 @@ schwarzschild-raytracer [OPTIONS]
   --spot-amp A       hot-spot amplitude, 0=off  (default 0.0)
   --spot-r R         hot-spot orbit radius in M (default 7.0)
   --frames N         frames to emit (fixed cam) (default 1)
-  --frame-dt DT      time step between frames   (default 1.0)";
+  --frame-dt DT      time step between frames   (default 1.0)
+  --profile P        disk temperature law: thin | nt (default thin)";
 
 impl Config {
     pub fn parse(args: impl Iterator<Item = String>) -> Result<Self, String> {
@@ -107,6 +111,13 @@ impl Config {
                 "--spot-r" => cfg.spot_r = parse_num(&value("--spot-r")?)?,
                 "--frames" => cfg.frames = parse_num(&value("--frames")?)?,
                 "--frame-dt" => cfg.frame_dt = parse_num(&value("--frame-dt")?)?,
+                "--profile" => {
+                    cfg.profile = match value("--profile")?.as_str() {
+                        "thin" => scene::DiskProfile::Thin,
+                        "nt" | "novikov-thorne" => scene::DiskProfile::NovikovThorne,
+                        other => return Err(format!("unknown profile: {other} (thin | nt)")),
+                    }
+                }
                 "--help" | "-h" => return Err(String::new()),
                 other => return Err(format!("unknown flag: {other}")),
             }

@@ -19,6 +19,20 @@ pub const T_ISCO: f64 = 7000.0;
 /// Gaussian angular width of the hot spot, in units of M (in-disk distance).
 pub const SPOT_SIGMA: f64 = 0.7;
 
+/// Radius where the Novikov–Thorne flux profile peaks: r = 49/6.
+pub const NT_PEAK_R: f64 = 49.0 / 6.0;
+
+/// Disk temperature law.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiskProfile {
+    /// T ∝ r^(−3/4), hottest at the ISCO (the original renderer's law).
+    Thin,
+    /// Novikov–Thorne: T ∝ [r⁻³(1 − √(6/r))]^(1/4) — the zero-torque inner
+    /// boundary condition makes T vanish at the ISCO, so the inner edge
+    /// fades to black; the peak sits at r = 49/6 ≈ 8.17.
+    NovikovThorne,
+}
+
 /// A bright spot on a circular geodesic orbit in the disk. Shaded at the
 /// photon's retarded emission time, so its wrapped secondary image visibly
 /// lags the primary and light echoes sweep the ring.
@@ -62,25 +76,41 @@ pub struct Scene {
     pub star_sigma: f64,
     /// Orbiting hot spot; None renders the steady axisymmetric disk.
     pub spot: Option<Spot>,
+    pub profile: DiskProfile,
     lut: BlackbodyLut,
 }
 
 impl Scene {
-    pub fn new(r_cam: f64, exposure: f64, star_sigma: f64, spot: Option<Spot>) -> Self {
+    pub fn new(
+        r_cam: f64,
+        exposure: f64,
+        star_sigma: f64,
+        spot: Option<Spot>,
+        profile: DiskProfile,
+    ) -> Self {
         Self {
             sqrt_f_cam: (1.0 - 2.0 / r_cam).sqrt(),
             exposure,
             star_sigma,
             spot,
+            profile,
             lut: BlackbodyLut::new(),
         }
     }
 
-    /// Thin-disk temperature profile, hottest at the ISCO.
-    /// (The Novikov–Thorne profile T ∝ [r⁻³(1 − √(6/r))]^(1/4) is the
-    /// drop-in alternative; it vanishes at the ISCO and peaks near r ≈ 8.2.)
-    pub fn disk_temperature(r: f64) -> f64 {
-        T_ISCO * (r / R_ISCO).powf(-0.75)
+    /// Disk temperature at radius r. Both profiles are normalized to the
+    /// same T_ISCO scale — Thin reaches it at the inner edge, Novikov–Thorne
+    /// at its flux peak (r = 49/6) — so exposure settings stay comparable.
+    pub fn disk_temperature(&self, r: f64) -> f64 {
+        match self.profile {
+            DiskProfile::Thin => T_ISCO * (r / R_ISCO).powf(-0.75),
+            DiskProfile::NovikovThorne => {
+                let flux = (1.0 - (R_ISCO / r).sqrt()) / (r * r * r);
+                let flux_peak = (1.0 - (R_ISCO / NT_PEAK_R).sqrt())
+                    / (NT_PEAK_R * NT_PEAK_R * NT_PEAK_R);
+                T_ISCO * (flux.max(0.0) / flux_peak).powf(0.25)
+            }
+        }
     }
 
     /// Combined gravitational + Doppler shift g = ν_obs/ν_em for an emitter
@@ -109,7 +139,7 @@ impl Scene {
     /// intensity ∝ T_obs⁴. Beaming and color stay mutually consistent.
     pub fn disk_radiance(&self, r: f64, b_z_traced: f64, temp_boost: f64) -> [f64; 3] {
         let g = self.redshift(r, b_z_traced);
-        let t_obs = g * Self::disk_temperature(r) * temp_boost;
+        let t_obs = g * self.disk_temperature(r) * temp_boost;
         let intensity = (t_obs / T_ISCO).powi(4) * self.exposure;
         self.lut.sample(t_obs).map(|c| c * intensity)
     }

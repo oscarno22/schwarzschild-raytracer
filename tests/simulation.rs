@@ -3,6 +3,7 @@
 //! identical to equivalent single-frame invocations.
 
 use schwarzschild_raytracer::render::{CachedRender, render};
+use schwarzschild_raytracer::scene::{DiskProfile, NT_PEAK_R, Scene, T_ISCO};
 use schwarzschild_raytracer::Config;
 
 fn small() -> Config {
@@ -44,6 +45,30 @@ fn spot_renders_and_orbits() {
     });
     assert_ne!(base, t0, "spot must be visible");
     assert_ne!(t0, t_half, "spot must move with frame time");
+}
+
+/// --profile thin must be byte-identical to the default; Novikov–Thorne
+/// must differ, vanish at the ISCO, and peak at r = 49/6 with value T_ISCO.
+#[test]
+fn novikov_thorne_profile() {
+    let plain = render(&small());
+    let thin = render(&Config {
+        profile: DiskProfile::Thin,
+        ..small()
+    });
+    let nt = render(&Config {
+        profile: DiskProfile::NovikovThorne,
+        ..small()
+    });
+    assert_eq!(plain, thin);
+    assert_ne!(plain, nt);
+
+    let scene = Scene::new(30.0, 4.0, 1e-3, None, DiskProfile::NovikovThorne);
+    assert_eq!(scene.disk_temperature(6.0), 0.0, "NT must vanish at ISCO");
+    let t_peak = scene.disk_temperature(NT_PEAK_R);
+    assert!((t_peak - T_ISCO).abs() < 1e-6, "NT peak {t_peak} != {T_ISCO}");
+    assert!(scene.disk_temperature(NT_PEAK_R - 0.5) < t_peak);
+    assert!(scene.disk_temperature(NT_PEAK_R + 0.5) < t_peak);
 }
 
 /// A frame emitted by the trace-once cache must be byte-identical to a
