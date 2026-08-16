@@ -16,6 +16,23 @@ use rayon::prelude::*;
 
 use crate::integrator::rk4_step;
 use crate::metric::{B_CRIT, HORIZON_EPS, R_HORIZON, State};
+use crate::scene::{DISK_INNER, DISK_OUTER};
+
+/// Result of a per-pixel table lookup.
+pub enum Lookup {
+    Captured,
+    /// First crossing of the global equatorial plane inside the disk
+    /// annulus, mirroring the opaque-disk semantics of `integrator::trace`.
+    Disk { r: f64, phi_p: f64, t: f64 },
+    /// No in-annulus crossing; the ray reaches the sky.
+    Sky {
+        psi_inf: f64,
+        /// Local |Δψ/Δε| between the bracketing rows — the lensing
+        /// magnification, used to widen the star PSF like the offline
+        /// renderer's sample-cloud measurement does.
+        dpsi_deps: f64,
+    },
+}
 
 pub struct TableParams {
     /// Number of ε rows.
@@ -126,6 +143,83 @@ impl DeltaTable {
         let w = ((eps - e0) / (e1 - e0)).clamp(0.0, 1.0);
         (j, w)
     }
+
+    /// Resolve a pixel: screen angle ε plus the z-components (a, b) of its
+    /// orbital-plane basis (e1.z, e2.z). Bilinear: linear in φ within each
+    /// bracketing row, linear in ε across them (nearest-row banding would be
+    /// visible exactly at the photon ring).
+    pub fn sample(&self, eps: f64, plane_az: f64, plane_bz: f64) -> Lookup {
+        use std::f64::consts::PI;
+        if eps <= self.eps_crit {
+            // Also covers the dead-radial ray whose orbital plane is
+            // arbitrary: b = 0 < b_crit, captured before the plane matters.
+            return Lookup::Captured;
+        }
+        let (j, w) = self.row_at(eps);
+        let (row0, row1) = (&self.rows[j], &self.rows[j + 1]);
+        if row0.psi_inf.is_nan() || row1.psi_inf.is_nan() {
+            // Photon-sphere limbo bracket: within ~w_min of the ring.
+            return Lookup::Captured;
+        }
+        let (a, b) = (plane_az, plane_bz);
+        // Global height z = r(a·cosφ + b·sinφ) vanishes at φ = −atan2(a, b)
+        // + kπ. a = b = 0 (equatorial camera, in-plane ray) never crosses —
+        // exactly matching trace()'s sign test, which never fires on z ≡ 0.
+        if a != 0.0 || b != 0.0 {
+            let phi0 = -a.atan2(b);
+            let phi_stop = row0.phi.last().unwrap().max(*row1.phi.last().unwrap());
+            let mut k = (-phi0 / PI).floor() as i64 + 1;
+            loop {
+                let phi_c = phi0 + k as f64 * PI;
+                if phi_c > phi_stop {
+                    break;
+                }
+                // Winding-count mismatch between bracketing rows (one row
+                // ends before this crossing) falls back to the longer row
+                // alone — sub-row-spacing, only within a spacing of the ring.
+                let hit = match (crossing_in_row(row0, phi_c), crossing_in_row(row1, phi_c)) {
+                    (Some((ra, ta)), Some((rb, tb))) => {
+                        Some(((1.0 - w) * ra + w * rb, (1.0 - w) * ta + w * tb))
+                    }
+                    (Some(x), None) | (None, Some(x)) => Some(x),
+                    (None, None) => None,
+                };
+                if let Some((rc, tc)) = hit
+                    && (DISK_INNER..=DISK_OUTER).contains(&rc)
+                {
+                    // First in-annulus crossing wins (opaque disk); earlier
+                    // out-of-annulus crossings were skipped — they are what
+                    // image the far side and underside.
+                    return Lookup::Disk {
+                        r: rc,
+                        phi_p: phi_c,
+                        t: tc,
+                    };
+                }
+                k += 1;
+            }
+        }
+        Lookup::Sky {
+            psi_inf: (1.0 - w) * row0.psi_inf + w * row1.psi_inf,
+            dpsi_deps: (row1.psi_inf - row0.psi_inf).abs() / (row1.eps - row0.eps),
+        }
+    }
+}
+
+/// Interpolate (r, t) at in-plane azimuth φ_c along a row's polyline, or
+/// None if the polyline ends before φ_c. φ is strictly increasing, so a
+/// binary search finds the segment.
+fn crossing_in_row(row: &DeltaRow, phi_c: f64) -> Option<(f64, f64)> {
+    if phi_c > *row.phi.last().unwrap() {
+        return None;
+    }
+    let i = row.phi.partition_point(|&p| p < phi_c).max(1);
+    let (p0, p1) = (row.phi[i - 1], row.phi[i]);
+    let f = (phi_c - p0) / (p1 - p0);
+    Some((
+        row.r[i - 1] + f * (row.r[i] - row.r[i - 1]),
+        row.t[i - 1] + f * (row.t[i] - row.t[i - 1]),
+    ))
 }
 
 /// Integrate one table ray. Same numerics as `integrator::trace` but with

@@ -2,9 +2,11 @@
 //! parity against the full RK4 trace, and interpolation accuracy of the
 //! tabulated escape directions.
 
-use schwarzschild_raytracer::deltatable::{DeltaTable, TableParams};
+use schwarzschild_raytracer::camera::Camera;
+use schwarzschild_raytracer::deltatable::{DeltaTable, Lookup, TableParams};
 use schwarzschild_raytracer::integrator::{RayOutcome, TraceParams, trace};
 use schwarzschild_raytracer::metric::State;
+use schwarzschild_raytracer::scene::{DISK_INNER, DISK_OUTER};
 
 const R_CAM: f64 = 30.0;
 
@@ -109,4 +111,70 @@ fn escape_direction_interpolation() {
         checked += 1;
     }
     assert!(checked > 15, "too few midpoints checked ({checked})");
+}
+
+/// (5) Disk-hit parity through the camera path: for pixels both paths
+/// classify as disk, interpolated hit radius and retarded time must match
+/// the full trace to 0.05 M (spot azimuth error Ω·Δt ≈ 2e-3 rad —
+/// invisible). Classification itself must agree away from the ring and the
+/// annulus edges.
+#[test]
+fn disk_hits_match_full_trace() {
+    let table = DeltaTable::build(R_CAM, small_params());
+    let cam = Camera::new(R_CAM, 80.0, 0.0, 75.0, 60, 34);
+    let sqrt_f = (1.0 - 2.0 / R_CAM).sqrt();
+    let (mut compared, mut mismatched, mut disk_pixels) = (0, 0, 0);
+    for j in 0..34 {
+        for i in 0..60 {
+            let ray = cam.make_ray(cam.pixel_dir(i, j, 0.5, 0.5));
+            let eps = (ray.l / R_CAM).atan2(-ray.y0[2] / sqrt_f);
+            let full = trace(
+                ray.y0,
+                &TraceParams {
+                    e: ray.e,
+                    step_scale: 0.02,
+                    max_steps: 300_000,
+                    r_far: table.params.r_far,
+                    plane_az: ray.e1.z,
+                    plane_bz: ray.e2.z,
+                    disk: Some((DISK_INNER, DISK_OUTER)),
+                },
+            );
+            let tab = table.sample(eps, ray.e1.z, ray.e2.z);
+            match (&full, &tab) {
+                (RayOutcome::Disk { state }, Lookup::Disk { r, t, .. }) => {
+                    disk_pixels += 1;
+                    // Annulus-edge hits can land on the other side of the
+                    // 6/20 boundary under interpolation; skip the rim.
+                    if state[0] - DISK_INNER > 0.2 && DISK_OUTER - state[0] > 0.2 {
+                        assert!(
+                            (state[0] - r).abs() < 0.05,
+                            "hit radius {} vs table {r} at pixel ({i},{j})",
+                            state[0]
+                        );
+                        assert!(
+                            (state[4] - t).abs() < 0.05,
+                            "hit time {} vs table {t} at pixel ({i},{j})",
+                            state[4]
+                        );
+                        compared += 1;
+                    }
+                }
+                (RayOutcome::Disk { .. }, _) | (_, Lookup::Disk { .. }) => {
+                    disk_pixels += 1;
+                    // Classification mismatch: tolerated only near the ring
+                    // or the annulus rim (checked in aggregate below).
+                    if (eps - table.eps_crit).abs() > 5e-3 {
+                        mismatched += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(compared > 50, "too few disk pixels compared ({compared})");
+    assert!(
+        (mismatched as f64) < 0.05 * disk_pixels as f64,
+        "{mismatched}/{disk_pixels} disk classification mismatches"
+    );
 }
