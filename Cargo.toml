@@ -6,6 +6,18 @@ edition = "2024"
 [dependencies]
 rayon = "1"
 image = "0.25"
+# The real-time viewer's window stack — a deliberate, contained exception
+# to the minimal-deps rule, compiled only with --features viewer.
+softbuffer = { version = "0.4", optional = true }
+winit = { version = "0.30", optional = true }
+
+[features]
+viewer = ["dep:winit", "dep:softbuffer"]
+
+[[bin]]
+name = "viewer"
+path = "src/bin/viewer.rs"
+required-features = ["viewer"]
 
 [profile.release]
 lto = "thin"
