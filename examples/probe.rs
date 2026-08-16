@@ -22,6 +22,7 @@ fn main() {
     let cam = Camera::new(
         cfg.r_cam,
         cfg.inclination_deg,
+        cfg.azimuth_deg,
         cfg.fov_deg,
         cfg.width,
         cfg.height,
@@ -49,7 +50,7 @@ fn main() {
                     println!("({a},{b}) disk r={:.3} phi={:.3}", state[0], state[1])
                 }
                 RayOutcome::Escaped { state } => {
-                    let [r, phi, p_r, p_phi] = state;
+                    let [r, phi, p_r, p_phi, _t] = state;
                     let (s, c) = phi.sin_cos();
                     let v = (ray.e1 * (p_r * c - r * p_phi * s)
                         + ray.e2 * (p_r * s + r * p_phi * c))
