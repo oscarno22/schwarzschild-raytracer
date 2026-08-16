@@ -106,6 +106,25 @@ pub fn tonemap(c: [f64; 3]) -> [u8; 3] {
     })
 }
 
+/// False-color map for the light-echo mode: cool→hot over u ∈ [0, 1]
+/// (deep blue → indigo → orange → warm white), display-space stops with the
+/// red channel strictly increasing so echo ordering is directly readable.
+pub fn echo_colormap(u: f64) -> [u8; 3] {
+    const STOPS: [[f64; 3]; 4] = [
+        [0.05, 0.03, 0.25],
+        [0.20, 0.25, 0.60],
+        [0.85, 0.45, 0.20],
+        [1.00, 0.95, 0.75],
+    ];
+    let x = u.clamp(0.0, 1.0) * (STOPS.len() - 1) as f64;
+    let i = (x as usize).min(STOPS.len() - 2);
+    let f = x - i as f64;
+    std::array::from_fn(|k| {
+        let v = STOPS[i][k] + f * (STOPS[i + 1][k] - STOPS[i][k]);
+        (v * 255.0).round() as u8
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

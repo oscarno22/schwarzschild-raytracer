@@ -9,9 +9,9 @@
 
 use rayon::prelude::*;
 
-use crate::Config;
 use crate::camera::Camera;
-use crate::color::tonemap;
+use crate::color::{echo_colormap, tonemap};
+use crate::{Config, RenderMode};
 use crate::integrator::{RayOutcome, TraceParams, trace};
 use crate::scene::{DISK_INNER, DISK_OUTER, Scene, Spot};
 
@@ -104,12 +104,13 @@ impl CachedRender {
         let row_len = cfg.width as usize * 3;
         let shade_row = |j: usize, row: &mut [u8]| {
             for i in 0..cfg.width as usize {
-                let px = shade_cached(
-                    &self.scene,
-                    &self.pixels[j * cfg.width as usize + i],
-                    t_frame,
-                    cfg.samples,
-                );
+                let px_cache = &self.pixels[j * cfg.width as usize + i];
+                let px = match cfg.render_mode {
+                    RenderMode::Color => {
+                        shade_cached(&self.scene, px_cache, t_frame, cfg.samples)
+                    }
+                    RenderMode::Echo => shade_echo(px_cache, cfg.r_cam),
+                };
                 row[i * 3..i * 3 + 3].copy_from_slice(&px);
             }
         };
@@ -220,4 +221,20 @@ fn shade_cached(scene: &Scene, px: &PixelCache, t_frame: f64, samples: u32) -> [
     }
     let inv = 1.0 / (samples * samples) as f64;
     tonemap([acc[0] * inv, acc[1] * inv, acc[2] * inv])
+}
+
+/// Light-echo false color: the first disk hit's light-travel delay Δt =
+/// −t_emit mapped over a fixed window. The window's lower edge is just
+/// inside the shortest possible path (straight to the near disk edge, ~r_cam
+/// − 10) and its span covers primary far-side paths through first-winding
+/// secondary images; longer paths saturate at the top of the map.
+fn shade_echo(px: &PixelCache, r_cam: f64) -> [u8; 3] {
+    let (t_min, t_max) = (r_cam - 10.0, r_cam + 60.0);
+    match px.hits.first() {
+        Some(hit) => echo_colormap((-hit.t_emit - t_min) / (t_max - t_min)),
+        // No disk hit: dark navy for sky, black for captured rays, so the
+        // shadow silhouette stays readable in echo renders.
+        None if !px.sky.is_empty() => [8, 8, 24],
+        None => [0, 0, 0],
+    }
 }

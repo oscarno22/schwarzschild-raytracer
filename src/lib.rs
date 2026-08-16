@@ -36,6 +36,19 @@ pub struct Config {
     pub frame_dt: f64,
     /// Disk temperature law: thin (T ∝ r^(−3/4)) or Novikov–Thorne.
     pub profile: scene::DiskProfile,
+    /// Color (physical shading) or Echo (retarded-time false color).
+    pub render_mode: RenderMode,
+}
+
+/// What each pixel displays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderMode {
+    /// Physical shading: blackbody disk + starfield.
+    Color,
+    /// False color of the disk hit's light-travel delay Δt — the light-echo
+    /// geometry made directly visible (far side and wrapped images are
+    /// measurably "older"). Sky renders dark navy, captured rays black.
+    Echo,
 }
 
 impl Default for Config {
@@ -59,6 +72,7 @@ impl Default for Config {
             frames: 1,
             frame_dt: 1.0,
             profile: scene::DiskProfile::Thin,
+            render_mode: RenderMode::Color,
         }
     }
 }
@@ -82,7 +96,8 @@ schwarzschild-raytracer [OPTIONS]
   --spot-r R         hot-spot orbit radius in M (default 7.0)
   --frames N         frames to emit (fixed cam) (default 1)
   --frame-dt DT      time step between frames   (default 1.0)
-  --profile P        disk temperature law: thin | nt (default thin)";
+  --profile P        disk temperature law: thin | nt (default thin)
+  --render-mode M    color | echo (light-delay false color; default color)";
 
 impl Config {
     pub fn parse(args: impl Iterator<Item = String>) -> Result<Self, String> {
@@ -116,6 +131,13 @@ impl Config {
                         "thin" => scene::DiskProfile::Thin,
                         "nt" | "novikov-thorne" => scene::DiskProfile::NovikovThorne,
                         other => return Err(format!("unknown profile: {other} (thin | nt)")),
+                    }
+                }
+                "--render-mode" => {
+                    cfg.render_mode = match value("--render-mode")?.as_str() {
+                        "color" => RenderMode::Color,
+                        "echo" => RenderMode::Echo,
+                        other => return Err(format!("unknown render mode: {other} (color | echo)")),
                     }
                 }
                 "--help" | "-h" => return Err(String::new()),

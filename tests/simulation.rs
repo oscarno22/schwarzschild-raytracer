@@ -4,7 +4,7 @@
 
 use schwarzschild_raytracer::render::{CachedRender, render};
 use schwarzschild_raytracer::scene::{DiskProfile, NT_PEAK_R, Scene, T_ISCO};
-use schwarzschild_raytracer::Config;
+use schwarzschild_raytracer::{Config, RenderMode};
 
 fn small() -> Config {
     Config {
@@ -69,6 +69,34 @@ fn novikov_thorne_profile() {
     assert!((t_peak - T_ISCO).abs() < 1e-6, "NT peak {t_peak} != {T_ISCO}");
     assert!(scene.disk_temperature(NT_PEAK_R - 0.5) < t_peak);
     assert!(scene.disk_temperature(NT_PEAK_R + 0.5) < t_peak);
+}
+
+/// Echo mode maps light-travel delay to a colormap whose red channel is
+/// strictly increasing: scanning the center column, the topmost disk pixel
+/// (far side) must read redder — i.e. older light — than the bottommost
+/// (near side).
+#[test]
+fn echo_mode_far_side_reads_older() {
+    let cfg = Config {
+        render_mode: RenderMode::Echo,
+        ..small()
+    };
+    let buf = render(&cfg);
+    let px = |i: u32, j: u32| {
+        let idx = ((j * cfg.width + i) * 3) as usize;
+        [buf[idx], buf[idx + 1], buf[idx + 2]]
+    };
+    let is_disk = |c: [u8; 3]| c != [0, 0, 0] && c != [8, 8, 24];
+    let col = cfg.width / 2;
+    let top = (0..cfg.height).find(|&j| is_disk(px(col, j))).unwrap();
+    let bottom = (0..cfg.height).rev().find(|&j| is_disk(px(col, j))).unwrap();
+    assert!(top < cfg.height / 2 && bottom > cfg.height / 2);
+    assert!(
+        px(col, top)[0] > px(col, bottom)[0],
+        "far side {:?} must map later (redder) than near side {:?}",
+        px(col, top),
+        px(col, bottom)
+    );
 }
 
 /// A frame emitted by the trace-once cache must be byte-identical to a
