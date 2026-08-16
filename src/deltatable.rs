@@ -35,8 +35,13 @@ pub enum Lookup {
 }
 
 pub struct TableParams {
-    /// Number of ε rows.
+    /// Number of ε rows on the escaping side (ε > ε_crit).
     pub n_rows: usize,
+    /// Number of ε rows on the captured side (ε < ε_crit). Subcritical
+    /// rays plunge through the horizon, but many cross the near-side disk
+    /// first — the disk annulus overlaps the capture cone on the screen —
+    /// so their polylines are still needed for disk lookups.
+    pub n_rows_captured: usize,
     /// Offset of the innermost row above ε_crit, radians.
     pub w_min: f64,
     /// Angular coverage; must exceed the half-diagonal of the widest FOV
@@ -68,6 +73,7 @@ impl Default for TableParams {
             * 1.02;
         Self {
             n_rows: 4096,
+            n_rows_captured: 1024,
             w_min: 1e-6,
             eps_max,
             step_scale: 0.02,
@@ -105,6 +111,9 @@ pub struct DeltaTable {
     pub params: TableParams,
     /// Ascending ε, all supercritical: ε_j = ε_crit + w_min·ρ^j.
     pub rows: Vec<DeltaRow>,
+    /// Ascending ε, all subcritical (plunging rays): ε_j = ε_crit − w_min·ρ'^k,
+    /// refined toward ε_crit from below, where infalling rays also wind.
+    pub rows_captured: Vec<DeltaRow>,
 }
 
 impl DeltaTable {
@@ -124,24 +133,32 @@ impl DeltaTable {
                 trace_row(r_cam, sqrt_f, eps, &params)
             })
             .collect();
+        // Captured side: same refinement mirrored downward, covering
+        // (≈0, ε_crit); stored ascending like `rows`.
+        let n_in = params.n_rows_captured;
+        let span_in = eps_crit - params.w_min;
+        let rho_in = (span_in / params.w_min).powf(1.0 / (n_in - 1) as f64);
+        let rows_captured: Vec<DeltaRow> = (0..n_in)
+            .into_par_iter()
+            .map(|j| {
+                let eps = eps_crit - params.w_min * rho_in.powi((n_in - 1 - j) as i32);
+                trace_row(r_cam, sqrt_f, eps, &params)
+            })
+            .collect();
         Self {
             r_cam,
             sqrt_f,
             eps_crit,
             params,
             rows,
+            rows_captured,
         }
     }
 
-    /// Bracketing row index j (rows[j].eps ≤ eps, rows[j+1].eps ≥ eps when
-    /// possible) and the linear blend weight toward row j+1.
+    /// Bracketing row index j in `rows` (the escaping set) and the linear
+    /// blend weight toward row j+1.
     pub fn row_at(&self, eps: f64) -> (usize, f64) {
-        let n = self.rows.len();
-        let hi = self.rows.partition_point(|row| row.eps < eps);
-        let j = hi.clamp(1, n - 1) - 1;
-        let (e0, e1) = (self.rows[j].eps, self.rows[j + 1].eps);
-        let w = ((eps - e0) / (e1 - e0)).clamp(0.0, 1.0);
-        (j, w)
+        bracket(&self.rows, eps)
     }
 
     /// Resolve a pixel: screen angle ε plus the z-components (a, b) of its
@@ -149,11 +166,18 @@ impl DeltaTable {
     /// bracketing row, linear in ε across them (nearest-row banding would be
     /// visible exactly at the photon ring).
     pub fn sample(&self, eps: f64, plane_az: f64, plane_bz: f64) -> Lookup {
-        use std::f64::consts::PI;
         if eps <= self.eps_crit {
-            // Also covers the dead-radial ray whose orbital plane is
-            // arbitrary: b = 0 < b_crit, captured before the plane matters.
-            return Lookup::Captured;
+            // Plunging ray — but the disk annulus overlaps the capture cone
+            // on the screen, so check the subcritical polylines for a
+            // near-side disk crossing before calling it black. (The
+            // dead-radial ray's arbitrary orbital plane is harmless: with
+            // L = 0 its φ stays 0 and no crossing is found.)
+            let (j, w) = bracket(&self.rows_captured, eps);
+            let (row0, row1) = (&self.rows_captured[j], &self.rows_captured[j + 1]);
+            return match first_annulus_crossing(row0, row1, w, plane_az, plane_bz) {
+                Some((r, phi_p, t)) => Lookup::Disk { r, phi_p, t },
+                None => Lookup::Captured,
+            };
         }
         let (j, w) = self.row_at(eps);
         let (row0, row1) = (&self.rows[j], &self.rows[j + 1]);
@@ -161,48 +185,69 @@ impl DeltaTable {
             // Photon-sphere limbo bracket: within ~w_min of the ring.
             return Lookup::Captured;
         }
-        let (a, b) = (plane_az, plane_bz);
-        // Global height z = r(a·cosφ + b·sinφ) vanishes at φ = −atan2(a, b)
-        // + kπ. a = b = 0 (equatorial camera, in-plane ray) never crosses —
-        // exactly matching trace()'s sign test, which never fires on z ≡ 0.
-        if a != 0.0 || b != 0.0 {
-            let phi0 = -a.atan2(b);
-            let phi_stop = row0.phi.last().unwrap().max(*row1.phi.last().unwrap());
-            let mut k = (-phi0 / PI).floor() as i64 + 1;
-            loop {
-                let phi_c = phi0 + k as f64 * PI;
-                if phi_c > phi_stop {
-                    break;
-                }
-                // Winding-count mismatch between bracketing rows (one row
-                // ends before this crossing) falls back to the longer row
-                // alone — sub-row-spacing, only within a spacing of the ring.
-                let hit = match (crossing_in_row(row0, phi_c), crossing_in_row(row1, phi_c)) {
-                    (Some((ra, ta)), Some((rb, tb))) => {
-                        Some(((1.0 - w) * ra + w * rb, (1.0 - w) * ta + w * tb))
-                    }
-                    (Some(x), None) | (None, Some(x)) => Some(x),
-                    (None, None) => None,
-                };
-                if let Some((rc, tc)) = hit
-                    && (DISK_INNER..=DISK_OUTER).contains(&rc)
-                {
-                    // First in-annulus crossing wins (opaque disk); earlier
-                    // out-of-annulus crossings were skipped — they are what
-                    // image the far side and underside.
-                    return Lookup::Disk {
-                        r: rc,
-                        phi_p: phi_c,
-                        t: tc,
-                    };
-                }
-                k += 1;
-            }
+        if let Some((r, phi_p, t)) = first_annulus_crossing(row0, row1, w, plane_az, plane_bz) {
+            return Lookup::Disk { r, phi_p, t };
         }
         Lookup::Sky {
             psi_inf: (1.0 - w) * row0.psi_inf + w * row1.psi_inf,
             dpsi_deps: (row1.psi_inf - row0.psi_inf).abs() / (row1.eps - row0.eps),
         }
+    }
+}
+
+/// Bracketing index + blend weight in an ascending row slice.
+fn bracket(rows: &[DeltaRow], eps: f64) -> (usize, f64) {
+    let n = rows.len();
+    let hi = rows.partition_point(|row| row.eps < eps);
+    let j = hi.clamp(1, n - 1) - 1;
+    let (e0, e1) = (rows[j].eps, rows[j + 1].eps);
+    let w = ((eps - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    (j, w)
+}
+
+/// Walk the disk-plane crossings of a bracketed ray pair in ascending φ and
+/// return the first one inside the disk annulus, mirroring `trace()`'s
+/// opaque-disk semantics (out-of-annulus crossings continue — they are what
+/// image the far side and underside).
+///
+/// Global height z = r(a·cosφ + b·sinφ) vanishes at φ = −atan2(a, b) + kπ.
+/// a = b = 0 (equatorial camera, in-plane ray) never crosses — exactly
+/// matching trace()'s sign test, which never fires on z ≡ 0.
+fn first_annulus_crossing(
+    row0: &DeltaRow,
+    row1: &DeltaRow,
+    w: f64,
+    a: f64,
+    b: f64,
+) -> Option<(f64, f64, f64)> {
+    use std::f64::consts::PI;
+    if a == 0.0 && b == 0.0 {
+        return None;
+    }
+    let phi0 = -a.atan2(b);
+    let phi_stop = row0.phi.last().unwrap().max(*row1.phi.last().unwrap());
+    let mut k = (-phi0 / PI).floor() as i64 + 1;
+    loop {
+        let phi_c = phi0 + k as f64 * PI;
+        if phi_c > phi_stop {
+            return None;
+        }
+        // Winding-count mismatch between bracketing rows (one row ends
+        // before this crossing) falls back to the longer row alone —
+        // sub-row-spacing, only within a spacing of the critical ring.
+        let hit = match (crossing_in_row(row0, phi_c), crossing_in_row(row1, phi_c)) {
+            (Some((ra, ta)), Some((rb, tb))) => {
+                Some(((1.0 - w) * ra + w * rb, (1.0 - w) * ta + w * tb))
+            }
+            (Some(x), None) | (None, Some(x)) => Some(x),
+            (None, None) => None,
+        };
+        if let Some((rc, tc)) = hit
+            && (DISK_INNER..=DISK_OUTER).contains(&rc)
+        {
+            return Some((rc, phi_c, tc));
+        }
+        k += 1;
     }
 }
 

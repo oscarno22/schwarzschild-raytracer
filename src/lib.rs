@@ -8,6 +8,7 @@ pub mod integrator;
 pub mod metric;
 pub mod render;
 pub mod scene;
+pub mod tablerender;
 pub mod vec3;
 
 /// Render configuration, populated from CLI flags. All distances in units of M.
@@ -39,6 +40,9 @@ pub struct Config {
     pub profile: scene::DiskProfile,
     /// Color (physical shading) or Echo (retarded-time false color).
     pub render_mode: RenderMode,
+    /// Render through the precomputed δ-table (the viewer's fast path)
+    /// instead of per-ray RK4 integration.
+    pub table: bool,
 }
 
 /// What each pixel displays.
@@ -74,6 +78,7 @@ impl Default for Config {
             frame_dt: 1.0,
             profile: scene::DiskProfile::Thin,
             render_mode: RenderMode::Color,
+            table: false,
         }
     }
 }
@@ -98,7 +103,8 @@ schwarzschild-raytracer [OPTIONS]
   --frames N         frames to emit (fixed cam) (default 1)
   --frame-dt DT      time step between frames   (default 1.0)
   --profile P        disk temperature law: thin | nt (default thin)
-  --render-mode M    color | echo (light-delay false color; default color)";
+  --render-mode M    color | echo (light-delay false color; default color)
+  --table            render via the precomputed δ-table (viewer's fast path)";
 
 impl Config {
     pub fn parse(args: impl Iterator<Item = String>) -> Result<Self, String> {
@@ -119,6 +125,7 @@ impl Config {
                 "--fov" => cfg.fov_deg = parse_num(&value("--fov")?)?,
                 "--samples" => cfg.samples = parse_num(&value("--samples")?)?,
                 "--serial" => cfg.serial = true,
+                "--table" => cfg.table = true,
                 "--max-steps" => cfg.max_steps = parse_num(&value("--max-steps")?)?,
                 "--step-scale" => cfg.step_scale = parse_num(&value("--step-scale")?)?,
                 "--exposure" => cfg.exposure = parse_num(&value("--exposure")?)?,
@@ -156,6 +163,9 @@ impl Config {
         }
         if cfg.frames == 0 {
             return Err("--frames must be nonzero".into());
+        }
+        if cfg.table && cfg.render_mode != RenderMode::Color {
+            return Err("--table supports only --render-mode color".into());
         }
         if cfg.spot_amp != 0.0 {
             if cfg.spot_amp <= -1.0 {

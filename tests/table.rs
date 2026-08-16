@@ -2,11 +2,14 @@
 //! parity against the full RK4 trace, and interpolation accuracy of the
 //! tabulated escape directions.
 
+use schwarzschild_raytracer::Config;
 use schwarzschild_raytracer::camera::Camera;
 use schwarzschild_raytracer::deltatable::{DeltaTable, Lookup, TableParams};
 use schwarzschild_raytracer::integrator::{RayOutcome, TraceParams, trace};
 use schwarzschild_raytracer::metric::State;
+use schwarzschild_raytracer::render::render;
 use schwarzschild_raytracer::scene::{DISK_INNER, DISK_OUTER};
+use schwarzschild_raytracer::tablerender::{SkySpread, TableFrame};
 
 const R_CAM: f64 = 30.0;
 
@@ -177,4 +180,90 @@ fn disk_hits_match_full_trace() {
         (mismatched as f64) < 0.05 * disk_pixels as f64,
         "{mismatched}/{disk_pixels} disk classification mismatches"
     );
+}
+
+/// (4) The headline gate: a table-shaded image matches the full RK4 render
+/// pixel-for-pixel outside a thin exclusion band around the photon ring.
+#[test]
+fn disk_parity_image() {
+    let cfg = Config {
+        width: 160,
+        height: 90,
+        samples: 1,
+        serial: true,
+        spot_amp: 0.6,
+        time: 3.0,
+        ..Config::default()
+    };
+    let table = DeltaTable::build(cfg.r_cam, small_params());
+    let full = render(&cfg);
+    let tab = TableFrame::new(&cfg, &table, SkySpread::Reference).shade_rgb(cfg.time);
+    let cam = Camera::new(
+        cfg.r_cam,
+        cfg.inclination_deg,
+        cfg.azimuth_deg,
+        cfg.fov_deg,
+        cfg.width,
+        cfg.height,
+    );
+    let sqrt_f = (1.0 - 2.0 / cfg.r_cam).sqrt();
+    let (mut masked, mut within4, mut within2, mut outside) = (0u32, 0u32, 0u32, 0u32);
+    for j in 0..cfg.height {
+        for i in 0..cfg.width {
+            let ray = cam.make_ray(cam.pixel_dir(i, j, 0.5, 0.5));
+            let eps = (ray.l / cfg.r_cam).atan2(-ray.y0[2] / sqrt_f);
+            if (eps - table.eps_crit).abs() < 3e-3 {
+                masked += 1;
+                continue;
+            }
+            outside += 1;
+            let idx = ((j * cfg.width + i) * 3) as usize;
+            let d = (0..3)
+                .map(|k| (full[idx + k] as i32 - tab[idx + k] as i32).abs())
+                .max()
+                .unwrap();
+            if d <= 4 {
+                within4 += 1;
+            }
+            if d <= 2 {
+                within2 += 1;
+            }
+        }
+    }
+    let total = cfg.width * cfg.height;
+    assert!(
+        (masked as f64) < 0.03 * total as f64,
+        "exclusion mask covers {masked}/{total} pixels"
+    );
+    assert!(
+        within4 as f64 >= 0.99 * outside as f64,
+        "only {within4}/{outside} pixels within |Δ| ≤ 4"
+    );
+    assert!(
+        within2 as f64 >= 0.95 * outside as f64,
+        "only {within2}/{outside} pixels within |Δ| ≤ 2"
+    );
+}
+
+/// (6) The table renderer is deterministic and its parallel path matches
+/// the serial one byte-for-byte.
+#[test]
+fn table_render_deterministic() {
+    let cfg = Config {
+        width: 96,
+        height: 54,
+        samples: 1,
+        spot_amp: 0.6,
+        ..Config::default()
+    };
+    let table = DeltaTable::build(cfg.r_cam, small_params());
+    let parallel = TableFrame::new(&cfg, &table, SkySpread::Magnification);
+    let serial_cfg = Config {
+        serial: true,
+        ..cfg.clone()
+    };
+    let serial = TableFrame::new(&serial_cfg, &table, SkySpread::Magnification);
+    let a = parallel.shade_rgb(5.0);
+    assert_eq!(a, parallel.shade_rgb(5.0), "must be deterministic");
+    assert_eq!(a, serial.shade_rgb(5.0), "serial and parallel must agree");
 }
