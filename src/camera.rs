@@ -27,7 +27,8 @@ pub struct Camera {
 /// A pixel's ray: geodesic initial state plus the orbital-plane basis
 /// needed to reconstruct global 3D positions and directions.
 pub struct Ray {
-    /// [r, φ_plane, dr/dλ, dφ/dλ] at the camera.
+    /// [r, φ_plane, dr/dλ, dφ/dλ, t] at the camera (t = 0; the trace runs
+    /// backward, so a hit's emission time is −t_hit relative to the camera).
     pub y0: State,
     /// Conserved energy (= camera √f under local normalization p^t̂ = 1).
     pub e: f64,
@@ -40,9 +41,17 @@ pub struct Ray {
 }
 
 impl Camera {
-    pub fn new(r_cam: f64, inclination_deg: f64, fov_deg: f64, width: u32, height: u32) -> Self {
+    pub fn new(
+        r_cam: f64,
+        inclination_deg: f64,
+        azimuth_deg: f64,
+        fov_deg: f64,
+        width: u32,
+        height: u32,
+    ) -> Self {
         let inc = inclination_deg.to_radians();
-        let pos = Vec3::new(inc.sin(), 0.0, inc.cos()) * r_cam;
+        let az = azimuth_deg.to_radians();
+        let pos = Vec3::new(inc.sin() * az.cos(), inc.sin() * az.sin(), inc.cos()) * r_cam;
         let forward = (-pos).normalize();
         let cross = forward.cross(Vec3::new(0.0, 0.0, 1.0));
         // Looking straight down the polar axis leaves "up" unconstrained.
@@ -99,6 +108,7 @@ impl Camera {
                 0.0,
                 cos_d * self.sqrt_f,
                 sin_d / self.r_cam,
+                0.0,
             ],
             e: self.sqrt_f,
             l: self.r_cam * sin_d,

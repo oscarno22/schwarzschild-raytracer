@@ -15,7 +15,7 @@ use schwarzschild_raytracer::{Config, vec3::Vec3};
 #[test]
 fn shadow_edge_converges_to_b_crit() {
     let r_cam = 30.0;
-    let cam = Camera::new(r_cam, 90.0, 75.0, 100, 100);
+    let cam = Camera::new(r_cam, 90.0, 0.0, 75.0, 100, 100);
     let toward_bh = -(cam.pos.normalize());
     let perp = Vec3::new(0.0, 0.0, 1.0); // perpendicular to the radial line
     let captured = |eps: f64| {

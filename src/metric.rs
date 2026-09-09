@@ -20,23 +20,27 @@ pub const B_CRIT: f64 = 5.196152422706632;
 /// precision, and the emitted light is redshifted to black anyway.
 pub const HORIZON_EPS: f64 = 1e-3;
 
-/// Geodesic state in the ray's orbital plane: [r, φ, dr/dλ, dφ/dλ].
-pub type State = [f64; 4];
+/// Geodesic state in the ray's orbital plane: [r, φ, dr/dλ, dφ/dλ, t].
+/// Coordinate time t rides along passively (nothing feeds back on it); it
+/// gives the light-travel delay needed for retarded-time shading.
+pub type State = [f64; 5];
 
-/// Right-hand side of the null-geodesic system, with e_sq = E².
+/// Right-hand side of the null-geodesic system, with e = E the conserved
+/// energy.
 ///
 /// From the geodesic equation with the equatorial-slice Christoffel symbols
 ///   Γ^r_tt = (1−2/r)/r²,  Γ^r_rr = −1/(r(r−2)),  Γ^r_φφ = −(r−2),  Γ^φ_rφ = 1/r
 /// and dt/dλ = E/(1−2/r):
 #[inline]
-pub fn geodesic_rhs(y: State, e_sq: f64) -> State {
-    let [r, _phi, p_r, p_phi] = y;
+pub fn geodesic_rhs(y: State, e: f64) -> State {
+    let [r, _phi, p_r, p_phi, _t] = y;
     let f = 1.0 - 2.0 / r;
     [
         p_r,
         p_phi,
-        -e_sq / (r * r * f) + p_r * p_r / (r * (r - 2.0)) + (r - 2.0) * p_phi * p_phi,
+        -e * e / (r * r * f) + p_r * p_r / (r * (r - 2.0)) + (r - 2.0) * p_phi * p_phi,
         -2.0 * p_r * p_phi / r,
+        e / f,
     ]
 }
 
@@ -44,7 +48,7 @@ pub fn geodesic_rhs(y: State, e_sq: f64) -> State {
 /// Zero on-shell; its drift measures integration error (E enters analytically,
 /// so this doubles as the energy-conservation check).
 pub fn null_residual(y: State, e_sq: f64) -> f64 {
-    let [r, _phi, p_r, p_phi] = y;
+    let [r, _phi, p_r, p_phi, _t] = y;
     let f = 1.0 - 2.0 / r;
     (p_r * p_r - e_sq) / f + r * r * p_phi * p_phi
 }

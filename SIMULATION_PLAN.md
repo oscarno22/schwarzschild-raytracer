@@ -86,7 +86,15 @@ a note on what the echo/lag demonstrates.
 
 ---
 
-## Phase C (stretch, decide later) — δ-table real-time viewer
+## Phase C — δ-table real-time viewer ✅ (implemented)
+
+Status 2026-08-16: implemented in `src/deltatable.rs` + `src/tablerender.rs`
+(core library, tested headless in `tests/table.rs`) and `src/bin/viewer.rs`
+behind the `viewer` cargo feature (softbuffer + winit — the dependency
+decision below was made explicitly). One addition to the sketch: a
+subcritical row set, because plunging rays cross the near-side disk before
+the horizon and would otherwise render black. `--table` runs the fast path
+headless on the main binary.
 
 Key symmetry: at fixed r_cam the entire trace is a function of the single
 screen angle δ. Precompute, for ~4–8k δ values (geometrically refined near
